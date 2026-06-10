@@ -1,0 +1,39 @@
+name: mdbook
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "docs/**"
+      - ".github/workflows/mdbook.yml"
+  pull_request:
+    paths:
+      - "docs/**"
+      - ".github/workflows/mdbook.yml"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup mdBook
+        uses: peaceiris/actions-mdbook@v2
+        with:
+          # mdbook-version: 'latest'
+          mdbook-version: "0.5.2"
+
+      - run: cargo install mdbook-indexing
+      - run: mdbook build -d ./book docs
+
+      - name: Deploy
+        uses: peaceiris/actions-gh-pages@v4
+        if: ${{ github.ref == 'refs/heads/main' }}
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./docs/book
+          destination_dir: ./ref
+          enable_jekyll: true

@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DaffyChat</title>
+  <meta name="theme-color" content="#10141b">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      line-height: 1.4;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #10141b;
+      color: #e7edf5;
+    }
+    main {
+      width: min(680px, 92vw);
+      background: #1a2230;
+      border: 1px solid #2d3c52;
+      border-radius: 10px;
+      padding: 1.2rem 1.4rem;
+      box-shadow: 0 8px 32px rgb(0 0 0 / 35%);
+    }
+    h1 { margin-top: 0; font-size: 1.4rem; }
+    .muted { color: #9fb2ca; }
+    .placeholder {
+      margin-top: 1rem;
+      padding: 0.8rem;
+      border-radius: 8px;
+      background: #111826;
+      border: 1px dashed #3c4f6b;
+    }
+    label { display: block; margin: 0.5rem 0 0.3rem; }
+    input {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 0.55rem 0.65rem;
+      border-radius: 6px;
+      border: 1px solid #415879;
+      background: #0e1521;
+      color: #e7edf5;
+    }
+    button {
+      margin-top: 0.85rem;
+      padding: 0.55rem 0.85rem;
+      border-radius: 6px;
+      border: 1px solid #56749e;
+      background: #2a4368;
+      color: #f7fbff;
+      cursor: pointer;
+    }
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.75;
+    }
+    #status {
+      margin-top: 0.8rem;
+      font-size: 0.95rem;
+      color: #b9cbe2;
+    }
+    #callState {
+      margin-top: 0.4rem;
+      font-size: 0.92rem;
+      color: #9fc6ff;
+    }
+    .controls {
+      margin-top: 0.8rem;
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>DaffyChat</h1>
+    <p class="muted">Stage 3 baseline. Password-gated WebSocket signaling + WebRTC voice call. <a href="/guide">Open guide</a></p>
+    <div class="placeholder">
+      <label for="session">Session code</label>
+      <input id="session" type="text" placeholder="e.g. team-sync" autocomplete="off">
+      <label for="password">Password</label>
+      <input id="password" type="password" placeholder="shared secret">
+      <button id="joinBtn" type="button">Join</button>
+      <button id="leaveBtn" type="button" disabled>Leave</button>
+      <div class="controls">
+        <button id="muteBtn" type="button" disabled>Mute</button>
+        <button id="installBtn" type="button" hidden>Install App</button>
+      </div>
+      <div id="status">Idle</div>
+      <div id="callState">Call state: disconnected</div>
+      <audio id="remoteAudio" autoplay playsinline></audio>
+    </div>
+  </main>
+  <script>
+    (() => {
+      const sessionInput = document.getElementById('session');
+      const passwordInput = document.getElementById('password');
+      const joinBtn = document.getElementById('joinBtn');
+      const leaveBtn = document.getElementById('leaveBtn');
+      const muteBtn = document.getElementById('muteBtn');
+      const installBtn = document.getElementById('installBtn');
+      const statusEl = document.getElementById('status');
+      const callStateEl = document.getElementById('callState');
+      const remoteAudioEl = document.getElementById('remoteAudio');
+
+      let joined = false;
+      let sessionId = '';
+      let peerId = '';
+      let ws = null;
+      let pc = null;
+      let localStream = null;
+      let makingOffer = false;
+      let isMuted = false;
+      let polite = true;
+      let iceServers = [{urls: 'stun:stun.l.google.com:19302'}];
+      let deferredInstallPrompt = null;
+
+      function setStatus(text) {
+        statusEl.textContent = text;
+      }
+
+      function setCallState(text) {
+        callStateEl.textContent = 'Call state: ' + text;
+      }
+
+      function setJoinedState(value) {
+        joined = value;
+        joinBtn.disabled = value;
+        leaveBtn.disabled = !value;
+        sessionInput.disabled = value;
+        passwordInput.disabled = value;
+        muteBtn.disabled = !value || !localStream;
+      }
+
+      function resetClientState(reason) {
+        if (reason) setStatus(reason);
+        setJoinedState(false);
+        closePeerConnection();
+        stopLocalStream();
+        if (ws) {
+          try { ws.close(); } catch (_) {}
+        }
+        ws = null;
+        sessionId = '';
+        peerId = '';
+      }
+
+      async function loadServerConfig() {
+        try {
+          const res = await fetch('/api/config', {method: 'GET'});
+          if (!res.ok) return;
+          const data = await res.json();
+          if (data && data.ok && Array.isArray(data.ice_servers) && data.ice_servers.length > 0) {
+            iceServers = data.ice_servers;
+          }
+        } catch (_) {
+        }
+      }
+
+      function connectWebSocket() {
+        return new Promise((resolve, reject) => {
+          const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+          const socket = new WebSocket(proto + location.host + '/ws');
+          const timer = setTimeout(() => {
+            socket.close();
+            reject(new Error('websocket timeout'));
+          }, 8000);
+
+          socket.onopen = () => {
+            clearTimeout(timer);
+            ws = socket;
+            resolve(socket);
+          };
+
+          socket.onerror = () => {
+            clearTimeout(timer);
+            reject(new Error('websocket connection failed'));
+          };
+
+          socket.onclose = () => {
+            if (joined) {
+              resetClientState('Signaling disconnected');
+            }
+          };
+
+          socket.onmessage = async (ev) => {
+            let msg = {};
+            try { msg = JSON.parse(ev.data); } catch (_) { return; }
+            if (msg.type === 'hello') return;
+            if (msg.type === 'error') {
+              const errorText = msg.error || 'unknown';
+              setStatus('Signal error: ' + errorText);
+              if (errorText === 'rate limit' || errorText === 'invalid password' || errorText === 'session full') {
+                resetClientState('Disconnected: ' + errorText);
+              }
+              return;
+            }
+            if (msg.type === 'joined') {
+              peerId = msg.peer_id;
+              polite = msg.state !== 'waiting';
+              setJoinedState(true);
+              setStatus(msg.state === 'paired' ? 'Joined; peer already present' : 'Joined; waiting for peer');
+              await ensureLocalAudio();
+              await ensurePeerConnection();
+              return;
+            }
+            if (msg.type === 'peer-ready') {
+              setStatus('Peer connected; preparing call');
+              await ensureLocalAudio();
+              await ensurePeerConnection();
+              return;
+            }
+            if (msg.type === 'offer') return handleOffer(msg.payload || {});
+            if (msg.type === 'answer') return handleAnswer(msg.payload || {});
+            if (msg.type === 'ice-candidate') return handleIce(msg.payload || {});
+            if (msg.type === 'bye') {
+              setStatus('Peer left');
+              closePeerConnection();
+            }
+          };
+        });
+      }
+
+      function sendWs(obj) {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          throw new Error('signaling socket closed');
+        }
+        ws.send(JSON.stringify(obj));
+      }
+
+      async function sendSignal(type, payload) {
+        sendWs({type, payload});
+      }
+
+      function closePeerConnection() {
+        if (pc) {
+          try { pc.close(); } catch (_) {}
+          pc = null;
+        }
+        remoteAudioEl.srcObject = null;
+        setCallState('disconnected');
+      }
+
+      function stopLocalStream() {
+        if (!localStream) return;
+        for (const track of localStream.getTracks()) track.stop();
+        localStream = null;
+        muteBtn.disabled = true;
+        muteBtn.textContent = 'Mute';
+        isMuted = false;
+      }
+
+      async function ensurePeerConnection() {
+        if (pc) return pc;
+        pc = new RTCPeerConnection({
+          iceServers
+        });
+
+        pc.onconnectionstatechange = () => {
+          setCallState(pc.connectionState || 'unknown');
+          if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+            setStatus('Connection ended');
+          }
+        };
+
+        pc.onicecandidate = async (ev) => {
+          if (!ev.candidate || !joined) return;
+          try {
+            await sendSignal('ice-candidate', ev.candidate.toJSON());
+          } catch (_) {
+          }
+        };
+
+        pc.ontrack = (ev) => {
+          if (!ev.streams || ev.streams.length === 0) return;
+          remoteAudioEl.srcObject = ev.streams[0];
+          setStatus('Receiving remote audio');
+        };
+
+        pc.onnegotiationneeded = async () => {
+          if (!joined || makingOffer) return;
+          try {
+            makingOffer = true;
+            await pc.setLocalDescription(await pc.createOffer());
+            await sendSignal('offer', {sdp: pc.localDescription.sdp, type: pc.localDescription.type});
+            setStatus('Offer sent');
+          } catch (err) {
+            setStatus('Offer error: ' + err.message);
+          } finally {
+            makingOffer = false;
+          }
+        };
+
+        return pc;
+      }
+
+      async function ensureLocalAudio() {
+        if (localStream) return localStream;
+        localStream = await navigator.mediaDevices.getUserMedia({audio: true, video: false});
+        const conn = await ensurePeerConnection();
+        for (const track of localStream.getTracks()) conn.addTrack(track, localStream);
+        muteBtn.disabled = false;
+        setStatus('Microphone granted');
+        return localStream;
+      }
+
+      async function handleOffer(payload) {
+        const conn = await ensurePeerConnection();
+        const offerCollision = makingOffer || conn.signalingState !== 'stable';
+        if (!polite && offerCollision) return;
+        await conn.setRemoteDescription({type: payload.type || 'offer', sdp: payload.sdp});
+        await ensureLocalAudio();
+        await conn.setLocalDescription(await conn.createAnswer());
+        await sendSignal('answer', {sdp: conn.localDescription.sdp, type: conn.localDescription.type});
+        setStatus('Answer sent');
+      }
+
+      async function handleAnswer(payload) {
+        const conn = await ensurePeerConnection();
+        await conn.setRemoteDescription({type: payload.type || 'answer', sdp: payload.sdp});
+        setStatus('Answer applied');
+      }
+
+      async function handleIce(payload) {
+        const conn = await ensurePeerConnection();
+        if (!payload || !payload.candidate) return;
+        try {
+          await conn.addIceCandidate(payload);
+        } catch (_) {
+        }
+      }
+
+      async function join() {
+        const s = sessionInput.value.trim();
+        const p = passwordInput.value;
+        if (!s) return setStatus('Session code required');
+        if (!p) return setStatus('Password required');
+
+        joinBtn.disabled = true;
+        try {
+          sessionId = s;
+          await connectWebSocket();
+          sendWs({type: 'join', session: s, password: p});
+        } catch (err) {
+          setStatus('Join failed: ' + err.message);
+          joinBtn.disabled = false;
+          closePeerConnection();
+          stopLocalStream();
+        }
+      }
+
+      async function leave() {
+        if (!joined) return;
+        const socket = ws;
+        setJoinedState(false);
+        sessionId = '';
+        peerId = '';
+        setStatus('Left session');
+        closePeerConnection();
+        stopLocalStream();
+        try {
+          if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({type: 'leave'}));
+            socket.close();
+          }
+        } catch (_) {
+        }
+        ws = null;
+      }
+
+      function toggleMute() {
+        if (!localStream) return;
+        isMuted = !isMuted;
+        for (const track of localStream.getAudioTracks()) track.enabled = !isMuted;
+        muteBtn.textContent = isMuted ? 'Unmute' : 'Mute';
+        setStatus(isMuted ? 'Microphone muted' : 'Microphone unmuted');
+      }
+
+      joinBtn.addEventListener('click', join);
+      leaveBtn.addEventListener('click', leave);
+      muteBtn.addEventListener('click', toggleMute);
+      installBtn.addEventListener('click', async () => {
+        if (!deferredInstallPrompt) {
+          setStatus('Install prompt unavailable in this browser/session');
+          return;
+        }
+        deferredInstallPrompt.prompt();
+        try {
+          await deferredInstallPrompt.userChoice;
+        } catch (_) {
+        }
+        deferredInstallPrompt = null;
+        installBtn.hidden = true;
+      });
+      window.addEventListener('beforeinstallprompt', (event) => {
+        event.preventDefault();
+        deferredInstallPrompt = event;
+        installBtn.hidden = false;
+      });
+      window.addEventListener('appinstalled', () => {
+        deferredInstallPrompt = null;
+        installBtn.hidden = true;
+        setStatus('App installed');
+      });
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').catch(() => {});
+        });
+      }
+      loadServerConfig();
+      window.addEventListener('beforeunload', () => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          try { ws.send(JSON.stringify({type: 'leave'})); } catch (_) {}
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

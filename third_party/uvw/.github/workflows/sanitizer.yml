@@ -1,0 +1,30 @@
+name: sanitizer
+
+on: [push, pull_request]
+
+jobs:
+
+  clang:
+    timeout-minutes: 15
+
+    strategy:
+      matrix:
+        compiler: [clang++]
+        sanitizer: [ASAN, UBSAN]
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Compile tests
+      working-directory: build
+      env:
+        CXX: ${{ matrix.compiler }}
+      run: |
+        cmake ${{ matrix.mode }} -DUVW_BUILD_TESTING=ON -DUVW_USE_${{ matrix.sanitizer }}=ON -Dlibuv_buildtests=OFF ..
+        make -j2
+    - name: Run tests
+      working-directory: build
+      env:
+        CTEST_OUTPUT_ON_FAILURE: 1
+      run: ctest --timeout 5 -C Debug -j2

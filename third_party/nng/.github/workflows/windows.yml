@@ -1,0 +1,35 @@
+name: windows
+on:
+  push:
+    paths-ignore: ["docs/**", "**.adoc", "**.md"]
+  pull_request:
+    paths-ignore: ["docs/**", "**.adoc", "**.md"]
+jobs:
+  build:
+    name: build
+    runs-on: [windows-latest]
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: vcpkg build
+        id: vcpkg
+        uses: johnwason/vcpkg-action@v6
+        with:
+          pkgs: mbedtls
+          triplet: x64-windows
+          token: ${{ github.token }}
+          github-binarycache: true
+
+      - name: Configure
+        # TLS on Windows is not good because vcpkg is *old* mbedTLS 2.28, and we don't pass some newer tests.
+        # We should explore testing WolfSSL here instead.
+        run: cmake ${{ steps.vcpkg.outputs.vcpkg-cmake-config }} -B build -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: |
+          cd build
+          ctest -C Debug --output-on-failure

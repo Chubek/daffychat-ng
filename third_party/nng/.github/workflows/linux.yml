@@ -1,0 +1,42 @@
+name: linux
+on:
+  push:
+    paths-ignore: ["docs/**", "**.adoc", "**.md"]
+  pull_request:
+    paths-ignore: ["docs/**", "**.adoc", "**.md"]
+jobs:
+  build:
+    strategy:
+      matrix:
+        tls:
+          - engine: mbed
+            pkg: libmbedtls-dev
+            dir: build.mbed
+          - engine: wolf
+            pkg: libwolfssl-dev
+            dir: build.wolf
+        pollq:
+          - poller: auto
+          - poller: epoll
+          - poller: select
+          - poller: poll
+    name: build
+    runs-on: [ubuntu-24.04]
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Install ninja
+        run: sudo apt-get install ninja-build
+
+      - name: Install TLS engine
+        run: sudo apt-get install ${{ matrix.tls.pkg }}
+
+      - name: Configure
+        run: mkdir ${{ matrix.tls.dir }} && cd ${{ matrix.tls.dir }} && cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug -D NNG_ENABLE_TLS=ON -DNNG_POLLQ_POLLER=${{ matrix.pollq.poller }} -DNNG_TLS_ENGINE=${{ matrix.tls.engine }} ..
+
+      - name: Build
+        run: cd ${{ matrix.tls.dir }} && ninja
+
+      - name: Test
+        run: cd ${{ matrix.tls.dir }} && ctest --output-on-failure

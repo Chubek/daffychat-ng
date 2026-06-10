@@ -1,0 +1,21 @@
+name: build-macos
+
+on: [push, pull_request]
+
+jobs:
+
+  macos:
+    timeout-minutes: 60
+    runs-on: macOS-latest
+
+    strategy:
+      matrix:
+        mode: [-DUVW_BUILD_SHARED_LIB=ON, -DUVW_BUILD_LIBS=ON, -DUVW_BUILD_LIBS=OFF]
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Compile tests
+      working-directory: build
+      run: |
+        cmake ${{ matrix.mode }} -DUVW_BUILD_TESTING=ON -Dlibuv_buildtests=OFF ..
+        make -j2

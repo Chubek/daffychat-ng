@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DaffyChat Guide</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      line-height: 1.45;
+    }
+    body {
+      margin: 0;
+      background: #10141b;
+      color: #e7edf5;
+    }
+    main {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 1.2rem 1rem 2rem;
+    }
+    h1, h2 { margin: 1rem 0 0.5rem; }
+    .card {
+      margin-top: 0.9rem;
+      padding: 0.9rem 1rem;
+      border: 1px solid #2d3c52;
+      border-radius: 10px;
+      background: #1a2230;
+    }
+    .muted { color: #9fb2ca; }
+    a { color: #9fc6ff; }
+    code {
+      background: #0e1521;
+      border: 1px solid #36485f;
+      border-radius: 4px;
+      padding: 0.06rem 0.3rem;
+    }
+    ul { margin-top: 0.5rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>DaffyChat Guide</h1>
+    <p class="muted">Quick navigation and install instructions for the DaffyChat PWA.</p>
+
+    <div class="card">
+      <h2>1) Open and Join</h2>
+      <ul>
+        <li>Open <a href="/">DaffyChat Home</a>.</li>
+        <li>Enter a shared <strong>Session code</strong> and <strong>Password</strong>.</li>
+        <li>Click <strong>Join</strong>.</li>
+        <li>Allow microphone permission when prompted.</li>
+        <li>Have the second user join with the same session/password.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>2) During Call</h2>
+      <ul>
+        <li>Use <strong>Mute</strong> / <strong>Unmute</strong> for local mic control.</li>
+        <li>Watch <strong>Call state</strong> and status text for connection health.</li>
+        <li>Use <strong>Leave</strong> to disconnect cleanly.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>3) Install as an App (PWA)</h2>
+      <p>Install works best over HTTPS (or localhost during development).</p>
+      <ul>
+        <li><strong>Chrome / Edge (Desktop):</strong> open DaffyChat, click the install icon in the address bar, confirm <em>Install</em>.</li>
+        <li><strong>Chrome (Android):</strong> open browser menu (<code>⋮</code>) → <em>Install app</em> / <em>Add to Home screen</em>.</li>
+        <li><strong>Safari (iPhone/iPad):</strong> open Share sheet → <em>Add to Home Screen</em>.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>4) Troubleshooting</h2>
+      <ul>
+        <li>If join fails with <em>invalid password</em>, verify both users use the same password.</li>
+        <li>If call has no audio, re-check microphone permission in browser settings.</li>
+        <li>If signaling disconnects, refresh and re-join the same session.</li>
+      </ul>
+    </div>
+
+    <p class="muted"><a href="/">Back to DaffyChat</a></p>
+  </main>
+</body>
+</html>
