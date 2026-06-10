@@ -1,12 +1,14 @@
 [Unit]
-Description=DaffyChat minimal voice-chat signaling server
+Description=DaffyChat per-user instance for %i
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
+User=%i
+Group=%i
 WorkingDirectory=/usr/share/daffychat
-ExecStart=/usr/bin/daffychat-server --config %h/.daffychat/Daffychat.config
+ExecStart=/bin/sh -lc '/usr/bin/daffychat-server --config "$HOME/.daffychat/Daffychat.config"'
 Restart=on-failure
 RestartSec=2s
 NoNewPrivileges=true

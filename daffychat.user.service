@@ -1,0 +1,14 @@
+[Unit]
+Description=DaffyChat user service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.daffychat
+ExecStart=/usr/bin/daffychat-server --config %h/.daffychat/Daffychat.config
+Restart=on-failure
+RestartSec=2s
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
