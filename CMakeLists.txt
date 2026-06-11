@@ -51,6 +51,7 @@ install(FILES daffychat.service DESTINATION lib/systemd/system)
 install(FILES daffychat@.service DESTINATION lib/systemd/system)
 install(FILES daffychat.user.service DESTINATION share/daffychat)
 install(PROGRAMS scripts/setup-user-service.sh DESTINATION share/daffychat)
+install(PROGRAMS scripts/setup-stun-server.sh DESTINATION share/daffychat)
 
 add_executable(daffychat-ws-smoke tools/ws_smoke.cpp)
 target_compile_features(daffychat-ws-smoke PRIVATE cxx_std_17)

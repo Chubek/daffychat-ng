@@ -15,6 +15,8 @@ Builds a minimal .deb containing:
   - /usr/share/daffychat/Daffychat.config.default
   - /usr/share/daffychat/daffychat.user.service
   - /usr/share/daffychat/setup-user-service.sh
+  - /usr/share/daffychat/setup-stun-server.sh
+  - /usr/share/daffychat/third_party/coturn (vendored source for postinst build fallback)
   - /lib/systemd/system/daffychat.service
   - /lib/systemd/system/daffychat@.service
 
@@ -33,6 +35,7 @@ rm -rf "${ROOT}"
 mkdir -p "${ROOT}/DEBIAN" \
          "${ROOT}/usr/bin" \
          "${ROOT}/usr/share/daffychat" \
+         "${ROOT}/usr/share/daffychat/third_party" \
          "${ROOT}/lib/systemd/system"
 
 echo "[package] configuring CMake build"
@@ -49,8 +52,10 @@ install -m 0644 "icon.svg" "${ROOT}/usr/share/daffychat/icon.svg"
 install -m 0644 "config/daffychat.conf" "${ROOT}/usr/share/daffychat/Daffychat.config.default"
 install -m 0644 "daffychat.user.service" "${ROOT}/usr/share/daffychat/daffychat.user.service"
 install -m 0755 "scripts/setup-user-service.sh" "${ROOT}/usr/share/daffychat/setup-user-service.sh"
+install -m 0755 "scripts/setup-stun-server.sh" "${ROOT}/usr/share/daffychat/setup-stun-server.sh"
 install -m 0644 "daffychat.service" "${ROOT}/lib/systemd/system/daffychat.service"
 install -m 0644 "daffychat@.service" "${ROOT}/lib/systemd/system/daffychat@.service"
+cp -a "third_party/coturn" "${ROOT}/usr/share/daffychat/third_party/"
 
 cat > "${ROOT}/DEBIAN/control" <<EOF
 Package: ${PKG_NAME}
@@ -59,7 +64,7 @@ Section: net
 Priority: optional
 Architecture: ${ARCH}
 Maintainer: DaffyChat Maintainers <maintainers@example.com>
-Depends: libc6 (>= 2.31), libstdc++6
+Depends: libc6 (>= 2.31), libstdc++6, systemd
 Description: DaffyChat minimal one-to-one voice chat baseline server
  Stage 1 package containing HTTP static serving and health endpoint.
 EOF
@@ -85,6 +90,10 @@ fi
 
 if command -v systemctl >/dev/null 2>&1; then
   systemctl daemon-reload || true
+fi
+
+if [ -x /usr/share/daffychat/setup-stun-server.sh ]; then
+  /usr/share/daffychat/setup-stun-server.sh || echo "warning: STUN setup failed; inspect logs and run setup-stun-server.sh manually" >&2
 fi
 exit 0
 EOF
