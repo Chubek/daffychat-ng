@@ -12,8 +12,9 @@ Builds a minimal .deb containing:
   - /usr/share/daffychat/manifest.webmanifest
   - /usr/share/daffychat/sw.js
   - /usr/share/daffychat/icon.svg
+  - /etc/daffychat/daffychat.conf
   - /usr/share/daffychat/Daffychat.config.default
-  - /usr/share/daffychat/daffychat.user.service
+  - /lib/systemd/user/daffychat.service
   - /usr/share/daffychat/setup-user-service.sh
   - /usr/share/daffychat/setup-stun-server.sh
   - /usr/share/daffychat/third_party/coturn (vendored source for postinst build fallback)
@@ -36,7 +37,9 @@ mkdir -p "${ROOT}/DEBIAN" \
          "${ROOT}/usr/bin" \
          "${ROOT}/usr/share/daffychat" \
          "${ROOT}/usr/share/daffychat/third_party" \
-         "${ROOT}/lib/systemd/system"
+         "${ROOT}/lib/systemd/system" \
+         "${ROOT}/lib/systemd/user" \
+         "${ROOT}/etc/daffychat"
 
 echo "[package] configuring CMake build"
 cmake -S . -B build
@@ -49,8 +52,10 @@ install -m 0644 "guide.html" "${ROOT}/usr/share/daffychat/guide.html"
 install -m 0644 "manifest.webmanifest" "${ROOT}/usr/share/daffychat/manifest.webmanifest"
 install -m 0644 "sw.js" "${ROOT}/usr/share/daffychat/sw.js"
 install -m 0644 "icon.svg" "${ROOT}/usr/share/daffychat/icon.svg"
+install -m 0644 "config/daffychat.conf" "${ROOT}/etc/daffychat/daffychat.conf"
 install -m 0644 "config/daffychat.conf" "${ROOT}/usr/share/daffychat/Daffychat.config.default"
 install -m 0644 "daffychat.user.service" "${ROOT}/usr/share/daffychat/daffychat.user.service"
+install -m 0644 "daffychat.user.service" "${ROOT}/lib/systemd/user/daffychat.service"
 install -m 0755 "scripts/setup-user-service.sh" "${ROOT}/usr/share/daffychat/setup-user-service.sh"
 install -m 0755 "scripts/setup-stun-server.sh" "${ROOT}/usr/share/daffychat/setup-stun-server.sh"
 install -m 0644 "daffychat.service" "${ROOT}/lib/systemd/system/daffychat.service"
@@ -72,21 +77,6 @@ EOF
 cat > "${ROOT}/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -e
-if [ -n "$SUDO_USER" ]; then
-  TARGET_USER="$SUDO_USER"
-  TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
-else
-  TARGET_USER="$(id -un)"
-  TARGET_HOME="$HOME"
-fi
-
-if [ -n "$TARGET_HOME" ] && [ -d "$TARGET_HOME" ]; then
-  install -d -m 0755 "$TARGET_HOME/.daffychat"
-  if [ ! -f "$TARGET_HOME/.daffychat/Daffychat.config" ]; then
-    install -m 0644 /usr/share/daffychat/Daffychat.config.default "$TARGET_HOME/.daffychat/Daffychat.config"
-  fi
-  chown -R "$TARGET_USER":"$TARGET_USER" "$TARGET_HOME/.daffychat" || true
-fi
 
 if command -v systemctl >/dev/null 2>&1; then
   systemctl daemon-reload || true

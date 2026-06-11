@@ -191,38 +191,42 @@
           };
 
           socket.onmessage = async (ev) => {
-            let msg = {};
-            try { msg = JSON.parse(ev.data); } catch (_) { return; }
-            if (msg.type === 'hello') return;
-            if (msg.type === 'error') {
-              const errorText = msg.error || 'unknown';
-              setStatus('Signal error: ' + errorText);
-              if (errorText === 'rate limit' || errorText === 'invalid password' || errorText === 'session full') {
-                resetClientState('Disconnected: ' + errorText);
+            try {
+              let msg = {};
+              try { msg = JSON.parse(ev.data); } catch (_) { return; }
+              if (msg.type === 'hello') return;
+              if (msg.type === 'error') {
+                const errorText = msg.error || 'unknown';
+                setStatus('Signal error: ' + errorText);
+                if (errorText === 'rate limit' || errorText === 'invalid password' || errorText === 'session full') {
+                  resetClientState('Disconnected: ' + errorText);
+                }
+                return;
               }
-              return;
-            }
-            if (msg.type === 'joined') {
-              peerId = msg.peer_id;
-              polite = msg.state !== 'waiting';
-              setJoinedState(true);
-              setStatus(msg.state === 'paired' ? 'Joined; peer already present' : 'Joined; waiting for peer');
-              await ensureLocalAudio();
-              await ensurePeerConnection();
-              return;
-            }
-            if (msg.type === 'peer-ready') {
-              setStatus('Peer connected; preparing call');
-              await ensureLocalAudio();
-              await ensurePeerConnection();
-              return;
-            }
-            if (msg.type === 'offer') return handleOffer(msg.payload || {});
-            if (msg.type === 'answer') return handleAnswer(msg.payload || {});
-            if (msg.type === 'ice-candidate') return handleIce(msg.payload || {});
-            if (msg.type === 'bye') {
-              setStatus('Peer left');
-              closePeerConnection();
+              if (msg.type === 'joined') {
+                peerId = msg.peer_id;
+                polite = msg.state !== 'waiting';
+                setJoinedState(true);
+                setStatus(msg.state === 'paired' ? 'Joined; peer already present' : 'Joined; waiting for peer');
+                await ensureLocalAudio();
+                await ensurePeerConnection();
+                return;
+              }
+              if (msg.type === 'peer-ready') {
+                setStatus('Peer connected; preparing call');
+                await ensureLocalAudio();
+                await ensurePeerConnection();
+                return;
+              }
+              if (msg.type === 'offer') return handleOffer(msg.payload || {});
+              if (msg.type === 'answer') return handleAnswer(msg.payload || {});
+              if (msg.type === 'ice-candidate') return handleIce(msg.payload || {});
+              if (msg.type === 'bye') {
+                setStatus('Peer left');
+                closePeerConnection();
+              }
+            } catch (err) {
+              setStatus('Call setup error: ' + (err && err.message ? err.message : 'unknown'));
             }
           };
         });
@@ -303,6 +307,9 @@
 
       async function ensureLocalAudio() {
         if (localStream) return localStream;
+        if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error('Microphone requires HTTPS (or localhost) in this browser');
+        }
         localStream = await navigator.mediaDevices.getUserMedia({audio: true, video: false});
         const conn = await ensurePeerConnection();
         for (const track of localStream.getTracks()) conn.addTrack(track, localStream);

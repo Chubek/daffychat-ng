@@ -6,6 +6,7 @@ COTURN_BUILD_DIR="/var/lib/daffychat/coturn-build"
 TURN_CONFIG_DIR="/etc/daffychat"
 TURN_CONFIG_PATH="${TURN_CONFIG_DIR}/turnserver.conf"
 TURN_SERVICE_PATH="/etc/systemd/system/daffychat-stun.service"
+DAFFYCHAT_CONFIG_PATH="/etc/daffychat/daffychat.conf"
 TURN_BIN_PATH=""
 
 resolve_turnserver_bin() {
@@ -60,10 +61,63 @@ listening-ip=0.0.0.0
 realm=daffychat.local
 fingerprint
 stun-only
+no-tls
+no-dtls
 no-auth
 no-cli
 simple-log
 EOF
+}
+
+detect_stun_host() {
+  local fqdn=""
+  fqdn="$(hostname -f 2>/dev/null || true)"
+  if [[ -n "${fqdn}" && "${fqdn}" != "localhost" ]]; then
+    echo "${fqdn}"
+    return 0
+  fi
+
+  local host_short=""
+  host_short="$(hostname 2>/dev/null || true)"
+  if [[ -n "${host_short}" && "${host_short}" != "localhost" ]]; then
+    echo "${host_short}"
+    return 0
+  fi
+
+  local first_ip=""
+  first_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  if [[ -n "${first_ip}" ]]; then
+    echo "${first_ip}"
+    return 0
+  fi
+
+  echo "127.0.0.1"
+}
+
+update_daffychat_stun_config() {
+  if [[ ! -f "${DAFFYCHAT_CONFIG_PATH}" ]]; then
+    return 0
+  fi
+
+  local configured_url=""
+  configured_url="$(awk -F'\"' '/^[[:space:]]*stun_url[[:space:]]*=/{print $2; exit}' "${DAFFYCHAT_CONFIG_PATH}" || true)"
+  local should_replace="0"
+  if [[ -z "${configured_url}" ]]; then
+    should_replace="1"
+  elif [[ "${configured_url}" == "stun:127.0.0.1:3478" || "${configured_url}" == "stun:localhost:3478" ]]; then
+    should_replace="1"
+  fi
+
+  if [[ "${should_replace}" != "1" ]]; then
+    echo "[stun-setup] keeping existing stun_url in ${DAFFYCHAT_CONFIG_PATH}: ${configured_url}"
+    return 0
+  fi
+
+  local stun_host=""
+  stun_host="$(detect_stun_host)"
+  local new_url="stun:${stun_host}:3478"
+  sed -i -E "s|^[[:space:]]*stun_url[[:space:]]*=.*$|stun_url = \"${new_url}\"|" "${DAFFYCHAT_CONFIG_PATH}"
+  echo "[stun-setup] updated daffychat stun_url to ${new_url}"
 }
 
 write_systemd_service() {
@@ -102,6 +156,7 @@ main() {
   fi
 
   write_turnserver_config
+  update_daffychat_stun_config
   write_systemd_service
 
   if command -v systemctl >/dev/null 2>&1; then

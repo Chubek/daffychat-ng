@@ -4,8 +4,8 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/.daffychat
-ExecStart=/usr/bin/daffychat-server --config %h/.daffychat/Daffychat.config
+WorkingDirectory=/usr/share/daffychat
+ExecStart=/usr/bin/daffychat-server --config /etc/daffychat/daffychat.conf
 Restart=on-failure
 RestartSec=2s
 NoNewPrivileges=true
