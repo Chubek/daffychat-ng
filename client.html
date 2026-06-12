@@ -119,8 +119,50 @@
       let makingOffer = false;
       let isMuted = false;
       let polite = true;
-      let iceServers = [{urls: 'stun:stun.l.google.com:19302'}];
+      let peerReady = false;
+      let iceServers = [];
       let deferredInstallPrompt = null;
+
+      function isLocalHostLike(hostname) {
+        const h = (hostname || '').toLowerCase();
+        return h === 'localhost' || h === '127.0.0.1' || h === '::1';
+      }
+
+      function serverLooksLocalOnly(hostname) {
+        const h = (hostname || '').toLowerCase();
+        return h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '[::1]';
+      }
+
+      function normalizeIceServers(rawServers) {
+        if (!Array.isArray(rawServers)) return [];
+        const filtered = [];
+        for (const entry of rawServers) {
+          if (!entry || typeof entry !== 'object') continue;
+          const urlsRaw = entry.urls;
+          const urls = Array.isArray(urlsRaw) ? urlsRaw : [urlsRaw];
+          const cleaned = [];
+          for (const value of urls) {
+            if (typeof value !== 'string') continue;
+            const trimmed = value.trim();
+            if (!trimmed) continue;
+            const lower = trimmed.toLowerCase();
+            if (!serverLooksLocalOnly(location.hostname)) {
+              if (lower.includes('stun:localhost') || lower.includes('stun:127.0.0.1') || lower.includes('stun:[::1]') ||
+                  lower.includes('turn:localhost') || lower.includes('turn:127.0.0.1') || lower.includes('turn:[::1]') ||
+                  lower.includes('turns:localhost') || lower.includes('turns:127.0.0.1') || lower.includes('turns:[::1]')) {
+                continue;
+              }
+            }
+            cleaned.push(trimmed);
+          }
+          if (cleaned.length === 0) continue;
+          const out = {urls: cleaned.length === 1 ? cleaned[0] : cleaned};
+          if (typeof entry.username === 'string' && entry.username.length > 0) out.username = entry.username;
+          if (typeof entry.credential === 'string' && entry.credential.length > 0) out.credential = entry.credential;
+          filtered.push(out);
+        }
+        return filtered;
+      }
 
       function setStatus(text) {
         statusEl.textContent = text;
@@ -132,6 +174,7 @@
 
       function setJoinedState(value) {
         joined = value;
+        if (!value) peerReady = false;
         joinBtn.disabled = value;
         leaveBtn.disabled = !value;
         sessionInput.disabled = value;
@@ -158,7 +201,15 @@
           if (!res.ok) return;
           const data = await res.json();
           if (data && data.ok && Array.isArray(data.ice_servers) && data.ice_servers.length > 0) {
-            iceServers = data.ice_servers;
+            const sanitized = normalizeIceServers(data.ice_servers);
+            if (sanitized.length > 0) {
+              iceServers = sanitized;
+            } else {
+              iceServers = [];
+              if (!isLocalHostLike(location.hostname)) {
+                setStatus('Server ICE config looked local-only; ask admin to set reachable STUN/TURN');
+              }
+            }
           }
         } catch (_) {
         }
@@ -206,22 +257,36 @@
               if (msg.type === 'joined') {
                 peerId = msg.peer_id;
                 polite = msg.state !== 'waiting';
+                peerReady = msg.state === 'paired';
                 setJoinedState(true);
                 setStatus(msg.state === 'paired' ? 'Joined; peer already present' : 'Joined; waiting for peer');
-                await ensureLocalAudio();
-                await ensurePeerConnection();
+                if (peerReady) {
+                  await ensureLocalAudio();
+                  await ensurePeerConnection();
+                }
                 return;
               }
               if (msg.type === 'peer-ready') {
-                setStatus('Peer connected; preparing call');
+                peerReady = true;
+                setStatus(polite ? 'Peer connected; waiting for offer' : 'Peer connected; preparing call');
                 await ensureLocalAudio();
                 await ensurePeerConnection();
                 return;
               }
-              if (msg.type === 'offer') return handleOffer(msg.payload || {});
-              if (msg.type === 'answer') return handleAnswer(msg.payload || {});
-              if (msg.type === 'ice-candidate') return handleIce(msg.payload || {});
+              if (msg.type === 'offer') {
+                peerReady = true;
+                return handleOffer(msg.payload || {});
+              }
+              if (msg.type === 'answer') {
+                peerReady = true;
+                return handleAnswer(msg.payload || {});
+              }
+              if (msg.type === 'ice-candidate') {
+                peerReady = true;
+                return handleIce(msg.payload || {});
+              }
               if (msg.type === 'bye') {
+                peerReady = false;
                 setStatus('Peer left');
                 closePeerConnection();
               }
@@ -266,6 +331,9 @@
         pc = new RTCPeerConnection({
           iceServers
         });
+        if (iceServers.length === 0) {
+          setStatus('No ICE servers configured; local/LAN calls may still work');
+        }
 
         pc.onconnectionstatechange = () => {
           setCallState(pc.connectionState || 'unknown');
@@ -275,7 +343,7 @@
         };
 
         pc.onicecandidate = async (ev) => {
-          if (!ev.candidate || !joined) return;
+          if (!ev.candidate || !joined || !peerReady) return;
           try {
             await sendSignal('ice-candidate', ev.candidate.toJSON());
           } catch (_) {
@@ -285,13 +353,18 @@
         pc.ontrack = (ev) => {
           if (!ev.streams || ev.streams.length === 0) return;
           remoteAudioEl.srcObject = ev.streams[0];
+          const playPromise = remoteAudioEl.play();
+          if (playPromise && typeof playPromise.catch === 'function') {
+            playPromise.catch(() => {});
+          }
           setStatus('Receiving remote audio');
         };
 
         pc.onnegotiationneeded = async () => {
-          if (!joined || makingOffer) return;
+          if (!joined || !peerReady || makingOffer || polite) return;
           try {
             makingOffer = true;
+            await ensureLocalAudio();
             await pc.setLocalDescription(await pc.createOffer());
             await sendSignal('offer', {sdp: pc.localDescription.sdp, type: pc.localDescription.type});
             setStatus('Offer sent');
@@ -319,6 +392,7 @@
       }
 
       async function handleOffer(payload) {
+        peerReady = true;
         const conn = await ensurePeerConnection();
         const offerCollision = makingOffer || conn.signalingState !== 'stable';
         if (!polite && offerCollision) return;

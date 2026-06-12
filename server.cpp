@@ -22,7 +22,7 @@ struct Config {
   int port = 8080;
   std::string static_dir = ".";
   std::string password = "changeme";
-  std::string stun_url = "stun:stun.l.google.com:19302";
+  std::string stun_url = "";
   std::string turn_url = "";
   std::string turn_username = "";
   std::string turn_password = "";
@@ -535,6 +535,9 @@ void handle_signal(uWS::WebSocket<false, true, WsUserData> *ws, WsUserData *data
   }
   auto *other = find_other_peer(it->second, data->peer_id);
   if (!other || !other->ws) {
+    if (type == "offer" || type == "answer" || type == "ice-candidate" || type == "bye") {
+      return;
+    }
     ws_send_json(ws, json{{"ok", false}, {"type", "error"}, {"error", "peer not connected"}});
     return;
   }

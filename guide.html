@@ -80,6 +80,9 @@
         <li>If join fails with <em>invalid password</em>, verify both users use the same password.</li>
         <li>If call has no audio, re-check microphone permission in browser settings.</li>
         <li>If signaling disconnects, refresh and re-join the same session.</li>
+        <li>If browser shows <em>ICE failed</em>, configure reachable STUN/TURN in <code>/etc/daffychat/daffychat.conf</code> (avoid <code>localhost</code> for remote peers).</li>
+        <li>For restrictive NAT/mobile networks, set TURN (for example <code>turns:turn.example.com:5349</code>) with username/password.</li>
+        <li>DaffyChat does not require Google STUN; point STUN/TURN to your own reachable server or internal relay.</li>
       </ul>
     </div>
 
