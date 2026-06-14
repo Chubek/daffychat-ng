@@ -70,6 +70,11 @@
       font-size: 0.92rem;
       color: #9fc6ff;
     }
+    #roleBadge {
+      margin-top: 0.35rem;
+      font-size: 0.9rem;
+      color: #b7d7ff;
+    }
     #detailStatus {
       margin-top: 0.7rem;
       padding: 0.65rem;
@@ -107,6 +112,7 @@
       </div>
       <div id="status">Idle</div>
       <div id="callState">Call state: disconnected</div>
+      <div id="roleBadge">Role: unjoined</div>
       <div id="detailStatus" aria-live="polite">Detailed status timeline will appear here.</div>
       <audio id="remoteAudio" autoplay playsinline></audio>
     </div>
@@ -121,6 +127,7 @@
       const installBtn = document.getElementById('installBtn');
       const statusEl = document.getElementById('status');
       const callStateEl = document.getElementById('callState');
+      const roleBadgeEl = document.getElementById('roleBadge');
       const detailStatusEl = document.getElementById('detailStatus');
       const remoteAudioEl = document.getElementById('remoteAudio');
 
@@ -134,6 +141,8 @@
       let makingOffer = false;
       let isMuted = false;
       let polite = true;
+      let isOfferer = false;
+      let joinAcknowledged = false;
       let peerReady = false;
       let iceServers = [];
       let deferredInstallPrompt = null;
@@ -185,8 +194,12 @@
       }
 
       function currentRoleLabel() {
-        if (!joined) return 'unjoined';
-        return polite ? 'answerer' : 'offerer';
+        if (!joinAcknowledged) return 'unjoined';
+        return isOfferer ? 'offerer' : 'answerer';
+      }
+
+      function refreshRoleBadge() {
+        roleBadgeEl.textContent = 'Role: ' + currentRoleLabel();
       }
 
       function pushDetail(step) {
@@ -206,7 +219,13 @@
 
       function setJoinedState(value) {
         joined = value;
-        if (!value) peerReady = false;
+        if (!value) {
+          peerReady = false;
+          polite = true;
+          isOfferer = false;
+          joinAcknowledged = false;
+        }
+        refreshRoleBadge();
         joinBtn.disabled = value;
         leaveBtn.disabled = !value;
         sessionInput.disabled = value;
@@ -295,25 +314,32 @@
               }
               if (msg.type === 'joined') {
                 peerId = msg.peer_id;
-                polite = msg.state !== 'waiting';
+                joinAcknowledged = true;
+                isOfferer = msg.state === 'waiting';
+                polite = !isOfferer;
                 peerReady = msg.state === 'paired';
+                refreshRoleBadge();
                 pushDetail('Joined session as ' + currentRoleLabel() + '; session state=' + msg.state);
                 setJoinedState(true);
                 setStatus(msg.state === 'paired' ? 'Joined; peer already present' : 'Joined; waiting for peer');
                 if (peerReady) {
                   await ensurePeerConnection();
-                  if (!polite) {
+                  if (isOfferer) {
                     await ensureLocalAudio();
                   }
                 }
                 return;
               }
               if (msg.type === 'peer-ready') {
+                if (!joinAcknowledged) {
+                  pushDetail('Ignoring out-of-order peer-ready before join acknowledgement');
+                  return;
+                }
                 peerReady = true;
                 pushDetail('Peer-ready received');
-                setStatus(polite ? 'Peer connected; waiting for offer' : 'Peer connected; preparing call');
+                setStatus(isOfferer ? 'Peer connected; preparing call' : 'Peer connected; waiting for offer');
                 await ensurePeerConnection();
-                if (!polite) {
+                if (isOfferer) {
                   await ensureLocalAudio();
                 }
                 return;
@@ -433,7 +459,7 @@
         };
 
         pc.onnegotiationneeded = async () => {
-          if (!joined || !peerReady || makingOffer || polite) return;
+          if (!joined || !joinAcknowledged || !peerReady || makingOffer || !isOfferer) return;
           try {
             makingOffer = true;
             pushDetail('Negotiation needed; creating offer');
