@@ -70,6 +70,18 @@
       font-size: 0.92rem;
       color: #9fc6ff;
     }
+    #detailStatus {
+      margin-top: 0.7rem;
+      padding: 0.65rem;
+      border-radius: 6px;
+      border: 1px solid #334762;
+      background: #0c131f;
+      color: #cfe1f8;
+      font: 0.78rem/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      white-space: pre-wrap;
+      max-height: 220px;
+      overflow: auto;
+    }
     .controls {
       margin-top: 0.8rem;
       display: flex;
@@ -95,6 +107,7 @@
       </div>
       <div id="status">Idle</div>
       <div id="callState">Call state: disconnected</div>
+      <div id="detailStatus" aria-live="polite">Detailed status timeline will appear here.</div>
       <audio id="remoteAudio" autoplay playsinline></audio>
     </div>
   </main>
@@ -108,6 +121,7 @@
       const installBtn = document.getElementById('installBtn');
       const statusEl = document.getElementById('status');
       const callStateEl = document.getElementById('callState');
+      const detailStatusEl = document.getElementById('detailStatus');
       const remoteAudioEl = document.getElementById('remoteAudio');
 
       let joined = false;
@@ -116,12 +130,14 @@
       let ws = null;
       let pc = null;
       let localStream = null;
+      let localAudioPromise = null;
       let makingOffer = false;
       let isMuted = false;
       let polite = true;
       let peerReady = false;
       let iceServers = [];
       let deferredInstallPrompt = null;
+      const detailSteps = [];
 
       function isLocalHostLike(hostname) {
         const h = (hostname || '').toLowerCase();
@@ -168,8 +184,24 @@
         statusEl.textContent = text;
       }
 
+      function currentRoleLabel() {
+        if (!joined) return 'unjoined';
+        return polite ? 'answerer' : 'offerer';
+      }
+
+      function pushDetail(step) {
+        const stamp = new Date().toLocaleTimeString();
+        detailSteps.push('[' + stamp + '] [' + currentRoleLabel() + '] ' + step);
+        if (detailSteps.length > 80) {
+          detailSteps.splice(0, detailSteps.length - 80);
+        }
+        detailStatusEl.textContent = detailSteps.join('\n');
+        detailStatusEl.scrollTop = detailStatusEl.scrollHeight;
+      }
+
       function setCallState(text) {
         callStateEl.textContent = 'Call state: ' + text;
+        pushDetail('Call state changed: ' + text);
       }
 
       function setJoinedState(value) {
@@ -183,6 +215,7 @@
       }
 
       function resetClientState(reason) {
+        pushDetail('Resetting client state' + (reason ? ': ' + reason : ''));
         if (reason) setStatus(reason);
         setJoinedState(false);
         closePeerConnection();
@@ -217,6 +250,7 @@
 
       function connectWebSocket() {
         return new Promise((resolve, reject) => {
+          pushDetail('Opening signaling socket');
           const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
           const socket = new WebSocket(proto + location.host + '/ws');
           const timer = setTimeout(() => {
@@ -227,15 +261,18 @@
           socket.onopen = () => {
             clearTimeout(timer);
             ws = socket;
+            pushDetail('Signaling socket connected');
             resolve(socket);
           };
 
           socket.onerror = () => {
             clearTimeout(timer);
+            pushDetail('Signaling socket error');
             reject(new Error('websocket connection failed'));
           };
 
           socket.onclose = () => {
+            pushDetail('Signaling socket closed');
             if (joined) {
               resetClientState('Signaling disconnected');
             }
@@ -245,9 +282,11 @@
             try {
               let msg = {};
               try { msg = JSON.parse(ev.data); } catch (_) { return; }
+              pushDetail('Received signal: ' + (msg.type || 'unknown'));
               if (msg.type === 'hello') return;
               if (msg.type === 'error') {
                 const errorText = msg.error || 'unknown';
+                pushDetail('Signal error received: ' + errorText);
                 setStatus('Signal error: ' + errorText);
                 if (errorText === 'rate limit' || errorText === 'invalid password' || errorText === 'session full') {
                   resetClientState('Disconnected: ' + errorText);
@@ -258,39 +297,50 @@
                 peerId = msg.peer_id;
                 polite = msg.state !== 'waiting';
                 peerReady = msg.state === 'paired';
+                pushDetail('Joined session as ' + currentRoleLabel() + '; session state=' + msg.state);
                 setJoinedState(true);
                 setStatus(msg.state === 'paired' ? 'Joined; peer already present' : 'Joined; waiting for peer');
                 if (peerReady) {
-                  await ensureLocalAudio();
                   await ensurePeerConnection();
+                  if (!polite) {
+                    await ensureLocalAudio();
+                  }
                 }
                 return;
               }
               if (msg.type === 'peer-ready') {
                 peerReady = true;
+                pushDetail('Peer-ready received');
                 setStatus(polite ? 'Peer connected; waiting for offer' : 'Peer connected; preparing call');
-                await ensureLocalAudio();
                 await ensurePeerConnection();
+                if (!polite) {
+                  await ensureLocalAudio();
+                }
                 return;
               }
               if (msg.type === 'offer') {
                 peerReady = true;
+                pushDetail('Inbound offer received');
                 return handleOffer(msg.payload || {});
               }
               if (msg.type === 'answer') {
                 peerReady = true;
+                pushDetail('Inbound answer received');
                 return handleAnswer(msg.payload || {});
               }
               if (msg.type === 'ice-candidate') {
                 peerReady = true;
+                pushDetail('Inbound ICE candidate received');
                 return handleIce(msg.payload || {});
               }
               if (msg.type === 'bye') {
                 peerReady = false;
+                pushDetail('Peer disconnected (bye)');
                 setStatus('Peer left');
                 closePeerConnection();
               }
             } catch (err) {
+              pushDetail('Call setup exception: ' + (err && err.message ? err.message : 'unknown'));
               setStatus('Call setup error: ' + (err && err.message ? err.message : 'unknown'));
             }
           };
@@ -301,6 +351,7 @@
         if (!ws || ws.readyState !== WebSocket.OPEN) {
           throw new Error('signaling socket closed');
         }
+        pushDetail('Sending signal: ' + (obj && obj.type ? obj.type : 'unknown'));
         ws.send(JSON.stringify(obj));
       }
 
@@ -310,6 +361,7 @@
 
       function closePeerConnection() {
         if (pc) {
+          pushDetail('Closing peer connection');
           try { pc.close(); } catch (_) {}
           pc = null;
         }
@@ -319,15 +371,32 @@
 
       function stopLocalStream() {
         if (!localStream) return;
+        pushDetail('Stopping local microphone stream');
         for (const track of localStream.getTracks()) track.stop();
         localStream = null;
+        localAudioPromise = null;
         muteBtn.disabled = true;
         muteBtn.textContent = 'Mute';
         isMuted = false;
       }
 
+      function ensureLocalTracksOnConnection(conn) {
+        if (!conn || !localStream) return;
+        const senderTrackIds = new Set(
+          conn.getSenders()
+            .map((sender) => sender.track && sender.track.id)
+            .filter((id) => typeof id === 'string' && id.length > 0)
+        );
+        for (const track of localStream.getAudioTracks()) {
+          if (senderTrackIds.has(track.id)) continue;
+          pushDetail('Attaching local audio track to peer connection');
+          conn.addTrack(track, localStream);
+        }
+      }
+
       async function ensurePeerConnection() {
         if (pc) return pc;
+        pushDetail('Creating RTCPeerConnection');
         pc = new RTCPeerConnection({
           iceServers
         });
@@ -345,8 +414,10 @@
         pc.onicecandidate = async (ev) => {
           if (!ev.candidate || !joined || !peerReady) return;
           try {
+            pushDetail('Local ICE candidate discovered');
             await sendSignal('ice-candidate', ev.candidate.toJSON());
           } catch (_) {
+            pushDetail('Failed to send ICE candidate');
           }
         };
 
@@ -357,6 +428,7 @@
           if (playPromise && typeof playPromise.catch === 'function') {
             playPromise.catch(() => {});
           }
+          pushDetail('Remote audio track received');
           setStatus('Receiving remote audio');
         };
 
@@ -364,35 +436,55 @@
           if (!joined || !peerReady || makingOffer || polite) return;
           try {
             makingOffer = true;
+            pushDetail('Negotiation needed; creating offer');
             await ensureLocalAudio();
             await pc.setLocalDescription(await pc.createOffer());
             await sendSignal('offer', {sdp: pc.localDescription.sdp, type: pc.localDescription.type});
             setStatus('Offer sent');
           } catch (err) {
+            pushDetail('Offer creation failed: ' + err.message);
             setStatus('Offer error: ' + err.message);
           } finally {
             makingOffer = false;
           }
         };
 
+        ensureLocalTracksOnConnection(pc);
         return pc;
       }
 
       async function ensureLocalAudio() {
-        if (localStream) return localStream;
+        if (localStream) {
+          const existingConn = await ensurePeerConnection();
+          ensureLocalTracksOnConnection(existingConn);
+          muteBtn.disabled = false;
+          pushDetail('Reusing existing local microphone stream');
+          return localStream;
+        }
+        if (localAudioPromise) return localAudioPromise;
         if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
           throw new Error('Microphone requires HTTPS (or localhost) in this browser');
         }
-        localStream = await navigator.mediaDevices.getUserMedia({audio: true, video: false});
-        const conn = await ensurePeerConnection();
-        for (const track of localStream.getTracks()) conn.addTrack(track, localStream);
-        muteBtn.disabled = false;
-        setStatus('Microphone granted');
-        return localStream;
+        localAudioPromise = (async () => {
+          pushDetail('Requesting microphone access');
+          localStream = await navigator.mediaDevices.getUserMedia({audio: true, video: false});
+          const conn = await ensurePeerConnection();
+          ensureLocalTracksOnConnection(conn);
+          muteBtn.disabled = false;
+          pushDetail('Microphone access granted');
+          setStatus('Microphone granted');
+          return localStream;
+        })();
+        try {
+          return await localAudioPromise;
+        } finally {
+          localAudioPromise = null;
+        }
       }
 
       async function handleOffer(payload) {
         peerReady = true;
+        pushDetail('Applying remote offer');
         const conn = await ensurePeerConnection();
         const offerCollision = makingOffer || conn.signalingState !== 'stable';
         if (!polite && offerCollision) return;
@@ -400,10 +492,12 @@
         await ensureLocalAudio();
         await conn.setLocalDescription(await conn.createAnswer());
         await sendSignal('answer', {sdp: conn.localDescription.sdp, type: conn.localDescription.type});
+        pushDetail('Answer created and sent');
         setStatus('Answer sent');
       }
 
       async function handleAnswer(payload) {
+        pushDetail('Applying remote answer');
         const conn = await ensurePeerConnection();
         await conn.setRemoteDescription({type: payload.type || 'answer', sdp: payload.sdp});
         setStatus('Answer applied');
@@ -414,7 +508,9 @@
         if (!payload || !payload.candidate) return;
         try {
           await conn.addIceCandidate(payload);
+          pushDetail('Remote ICE candidate applied');
         } catch (_) {
+          pushDetail('Remote ICE candidate rejected');
         }
       }
 
@@ -425,11 +521,13 @@
         if (!p) return setStatus('Password required');
 
         joinBtn.disabled = true;
+        pushDetail('Join requested for session: ' + s);
         try {
           sessionId = s;
           await connectWebSocket();
           sendWs({type: 'join', session: s, password: p});
         } catch (err) {
+          pushDetail('Join failed: ' + err.message);
           setStatus('Join failed: ' + err.message);
           joinBtn.disabled = false;
           closePeerConnection();
@@ -439,6 +537,7 @@
 
       async function leave() {
         if (!joined) return;
+        pushDetail('Leave requested');
         const socket = ws;
         setJoinedState(false);
         sessionId = '';
@@ -461,6 +560,7 @@
         isMuted = !isMuted;
         for (const track of localStream.getAudioTracks()) track.enabled = !isMuted;
         muteBtn.textContent = isMuted ? 'Unmute' : 'Mute';
+        pushDetail(isMuted ? 'Microphone muted' : 'Microphone unmuted');
         setStatus(isMuted ? 'Microphone muted' : 'Microphone unmuted');
       }
 
